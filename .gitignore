@@ -1,12 +1,14 @@
 # Python
 __pycache__/
-*.py
 *.pyc
 *.egg-info/
 *.egg
 venv/
 dist/
 build/
+*.py
+src/
+tests/
 
 # IDE
 .vscode/
@@ -14,20 +16,14 @@ build/
 *.swp
 *.swo
 
-# Data
+# Data & Results
 data/
 results/
 *.csv
 *.json
 
-# Documentation (keep only essential)
-*.md
+# Unnecessary files
 .claude/
-
-# Examples
-examples/
-tests/
-src/
 demo_accuracy.py
 find_2x_strategy.py
 fix_backtester_accuracy.py
@@ -39,6 +35,8 @@ test_*.py
 verify_tradingview_accuracy.py
 final_2x_test.py
 
-# Keep only:
-# - *.pine files (strategies)
-# - README.md (if needed)
+# KEEP:
+# - *.pine files in strategies/
+# - README.md files
+# - docs/ folder
+# - examples/ folder
