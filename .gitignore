@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py
+*.pyc
+*.egg-info/
+*.egg
+venv/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data
+data/
+results/
+*.csv
+*.json
+
+# Documentation (keep only essential)
+*.md
+.claude/
+
+# Examples
+examples/
+tests/
+src/
+demo_accuracy.py
+find_2x_strategy.py
+fix_backtester_accuracy.py
+optimize_quant_strategy.py
+research_quant_strategy.py
+setup.py
+showcase_professional_viz.py
+test_*.py
+verify_tradingview_accuracy.py
+final_2x_test.py
+
+# Keep only:
+# - *.pine files (strategies)
+# - README.md (if needed)
