@@ -24,19 +24,13 @@ results/
 
 # Unnecessary files
 .claude/
-demo_accuracy.py
-find_2x_strategy.py
-fix_backtester_accuracy.py
-optimize_quant_strategy.py
-research_quant_strategy.py
-setup.py
-showcase_professional_viz.py
-test_*.py
-verify_tradingview_accuracy.py
-final_2x_test.py
 
-# KEEP:
-# - *.pine files in strategies/
-# - README.md files
-# - docs/ folder
-# - examples/ folder
+# Ignore old documentation files in root
+/*.md
+!README.md
+
+# KEEP in repository:
+# - README.md (root only)
+# - strategies/ folder (all .pine and README.md)
+# - docs/ folder (all .md files)
+# - examples/ folder (all files)

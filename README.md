@@ -29,7 +29,7 @@ claude-trading-strategies/
 │   └── WINNING_PINE_SCRIPT_2X.pine
 │
 ├── docs/                         # 📚 Documentation & guides
-│   └── (coming soon)
+│   └── TRADINGVIEW_ACCURACY.md   # Backtesting accuracy guide
 │
 ├── examples/                     # 💡 Usage examples
 │   └── (coming soon)
@@ -166,6 +166,25 @@ Total Trades:       ~400-600
 
 ---
 
+## 📚 Documentation
+
+### Essential Guides
+
+**[TradingView Accuracy Guide](docs/TRADINGVIEW_ACCURACY.md)** 🎯
+- Ensure 100% accurate backtests
+- Prevent lookahead bias
+- Avoid repainting indicators
+- Model realistic execution
+- Complete validation checklist
+
+**[Strategy Guide](strategies/README.md)** 📖
+- Complete strategy documentation
+- How to use each strategy
+- Parameter tuning guide
+- Performance expectations
+
+---
+
 ## 🔗 Useful Links
 
 - **TradingView**: https://www.tradingview.com
@@ -176,14 +195,18 @@ Total Trades:       ~400-600
 
 ## ✅ Checklist Before Live Trading
 
-- [ ] Read `strategies/README.md`
+- [ ] Read `docs/TRADINGVIEW_ACCURACY.md` - Learn how to backtest correctly
+- [ ] Read `strategies/README.md` - Understand the strategies
 - [ ] Copy TREND_MOMENTUM_PRO.pine
-- [ ] Test on SPY Daily chart
+- [ ] Configure TradingView settings (commission, slippage)
+- [ ] Test on SPY Daily chart (2000-present)
 - [ ] Verify ratio > 1.5x
+- [ ] Check results against validation checklist
 - [ ] Understand entry/exit logic
-- [ ] Know the expected drawdowns
+- [ ] Know the expected drawdowns (20-30%)
+- [ ] Test out-of-sample (different ticker or period)
 - [ ] Have a risk management plan
-- [ ] Start with paper trading
+- [ ] Start with paper trading first
 
 ---
 
