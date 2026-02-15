@@ -1,7 +1,0 @@
-{
-  "strategy": "ma_cross",
-  "symbol": "SPY",
-  "initial_cash": 100000,
-  "fast": 20,
-  "slow": 50
-}

@@ -1,9 +1,0 @@
-{
-  "symbol": "SPY",
-  "initial_capital": 100000.0,
-  "commission_pct": 0.1,
-  "slippage_bps": 0.5,
-  "fast": 10,
-  "slow": 50,
-  "position_pct": 200.0
-}
