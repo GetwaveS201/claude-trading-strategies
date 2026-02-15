@@ -1,0 +1,22 @@
+{
+  "initial_equity": 100000,
+  "final_equity": 1433275.8560330013,
+  "total_return_pct": 1333.2758560330014,
+  "start_date": "2015-01-01",
+  "end_date": "2024-12-31",
+  "duration_days": 3652,
+  "cagr": 30.51150866108223,
+  "max_drawdown_pct": -36.40815062601132,
+  "sharpe_ratio": 1.1603747709190073,
+  "sortino_ratio": 1.7293566244815866,
+  "num_trades": 31,
+  "num_wins": 14,
+  "num_losses": 17,
+  "win_rate_pct": 45.16129032258064,
+  "avg_win": 148244.15793764289,
+  "avg_win_pct": 16.74803643409577,
+  "avg_loss": -43414.67480800002,
+  "avg_loss_pct": -2.9311168560390564,
+  "profit_factor": 2.8120312941154384,
+  "exposure_pct": 73.28478344193178
+}

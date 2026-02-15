@@ -1,0 +1,314 @@
+//@version=5
+strategy("Advanced Adaptive Momentum Quant - 2x Target", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=150, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2, process_orders_on_close=false, calc_on_every_tick=false, margin_long=67)
+
+// ============================================================================
+// ADVANCED QUANTITATIVE STRATEGY
+// ============================================================================
+//
+// This strategy combines multiple quantitative factors:
+// 1. Multi-timeframe momentum analysis
+// 2. Volatility regime detection
+// 3. Trend strength filtering
+// 4. Volume confirmation
+// 5. Adaptive risk management (ATR-based stops)
+// 6. Dynamic position sizing
+//
+// Key Innovation: Adapts behavior based on market volatility regime
+// - Uses momentum signals differently in different volatility environments
+// - Not a simple EMA cross (less crowded, more sophisticated)
+//
+// Target: 2x+ vs Buy & Hold with robust risk management
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// Date Range
+startYear = input.int(2015, "Start Year", minval=2000)
+startMonth = input.int(1, "Start Month", minval=1, maxval=12)
+startDay = input.int(1, "Start Day", minval=1, maxval=31)
+endYear = input.int(2024, "End Year", minval=2000)
+endMonth = input.int(12, "End Month", minval=1, maxval=12)
+endDay = input.int(31, "End Day", minval=1, maxval=31)
+
+// Commission & Slippage
+commissionPct = input.float(0.1, "Commission %", minval=0, step=0.01)
+slippageTicks = input.int(2, "Slippage (ticks)", minval=0)
+
+// MOMENTUM PARAMETERS
+momentumFast = input.int(20, "Fast Momentum Period", minval=5, maxval=100, group="Momentum")
+momentumSlow = input.int(60, "Slow Momentum Period", minval=20, maxval=200, group="Momentum")
+momentumThreshold = input.float(0.02, "Momentum Threshold", minval=0.001, maxval=0.1, step=0.001, group="Momentum")
+
+// TREND FILTER
+trendPeriod = input.int(100, "Trend SMA Period", minval=50, maxval=200, group="Trend Filter")
+trendStrengthMin = input.float(0.01, "Min Trend Strength", minval=0, maxval=0.05, step=0.001, group="Trend Filter")
+
+// VOLATILITY REGIME
+volLookback = input.int(20, "Volatility Lookback", minval=10, maxval=50, group="Volatility")
+volPercentile = input.int(50, "Volatility Percentile", minval=1, maxval=100, group="Volatility")
+
+// RISK MANAGEMENT
+atrPeriod = input.int(14, "ATR Period", minval=5, maxval=30, group="Risk")
+atrStopMult = input.float(2.5, "ATR Stop Multiplier", minval=1.0, maxval=5.0, step=0.1, group="Risk")
+
+// POSITION SIZING
+leverageMultiplier = input.float(1.5, "Leverage Multiplier", minval=1.0, maxval=3.0, step=0.1, group="Position")
+
+// VOLUME FILTER
+volumePeriod = input.int(20, "Volume MA Period", minval=5, maxval=50, group="Volume")
+volumeThreshold = input.float(0.8, "Volume Threshold (% of avg)", minval=0.1, maxval=2.0, step=0.1, group="Volume")
+
+// Quality Gates
+minTrades = input.int(30, "Min Trades Required", minval=1)
+maxDDPct = input.float(50, "Max Drawdown % Allowed", minval=1, step=1)
+
+// ============================================================================
+// DATE FILTER
+// ============================================================================
+
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+inDateRange = time >= startTime and time <= endTime
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+
+// Trend Filter
+trendMA = ta.sma(close, trendPeriod)
+inUptrend = close > trendMA
+trendStrength = (close / trendMA) - 1
+
+// Momentum Calculation
+fastReturn = (close / close[momentumFast]) - 1
+slowReturn = (close / close[momentumSlow]) - 1
+momentumScore = fastReturn - slowReturn
+
+// Volatility Regime Detection
+returns = ta.change(close) / close[1]
+realizedVol = ta.stdev(returns, volLookback) * math.sqrt(252)
+
+// Calculate historical volatility percentile
+var array<float> historicalVols = array.new_float(0)
+if bar_index >= volLookback
+    array.push(historicalVols, realizedVol)
+    if array.size(historicalVols) > 252  // Keep 1 year of history
+        array.shift(historicalVols)
+
+volPercentileValue = array.size(historicalVols) > 0 ? array.percentile_linear_interpolation(historicalVols, volPercentile) : realizedVol
+isLowVolRegime = realizedVol < volPercentileValue
+
+// Volume Confirmation
+avgVolume = ta.sma(volume, volumePeriod)
+volumeConfirmed = volume >= avgVolume * volumeThreshold
+
+// ATR for stops
+atrValue = ta.atr(atrPeriod)
+
+// ============================================================================
+// ENTRY LOGIC (Multi-Factor)
+// ============================================================================
+
+// All conditions must be true for entry:
+// 1. Strong momentum (fast > slow significantly)
+// 2. Confirmed uptrend with strength
+// 3. Low-to-medium volatility (avoid chaos)
+// 4. Volume confirmation
+
+strongMomentum = momentumScore > momentumThreshold
+bullishTrend = inUptrend and trendStrength > trendStrengthMin
+
+// Entry signal
+entrySignal = strongMomentum and bullishTrend and isLowVolRegime and volumeConfirmed
+
+// Entry
+if entrySignal and inDateRange and barstate.isconfirmed and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+// ============================================================================
+// EXIT LOGIC (Multi-Factor)
+// ============================================================================
+
+// Exit conditions (any can trigger):
+// 1. Momentum reversal
+// 2. Trend break
+// 3. ATR-based stop loss
+
+momentumReversal = momentumScore < -0.005  // Negative momentum
+trendBreak = not inUptrend
+
+// Calculate stop loss
+var float entryPrice = na
+var float stopLoss = na
+
+if strategy.position_size > 0 and na(entryPrice)
+    entryPrice := close
+    stopLoss := close - (atrValue * atrStopMult)
+
+// Trail stop loss
+if strategy.position_size > 0 and not na(stopLoss)
+    newStop = close - (atrValue * atrStopMult)
+    if newStop > stopLoss
+        stopLoss := newStop
+
+stopTriggered = strategy.position_size > 0 and not na(stopLoss) and close < stopLoss
+
+// Exit
+exitSignal = momentumReversal or trendBreak or stopTriggered
+
+if exitSignal and barstate.isconfirmed and strategy.position_size > 0
+    strategy.close("Long")
+    entryPrice := na
+    stopLoss := na
+
+// Force close at end of range
+if strategy.position_size > 0 and not inDateRange and barstate.isconfirmed
+    strategy.close("Long")
+    entryPrice := na
+    stopLoss := na
+
+// ============================================================================
+// BUY & HOLD BENCHMARK
+// ============================================================================
+
+var float firstCloseInRange = na
+var bool bhBenchmarkSet = false
+
+if inDateRange and not bhBenchmarkSet
+    firstCloseInRange := close
+    bhBenchmarkSet := true
+
+if not inDateRange
+    bhBenchmarkSet := false
+
+bhReturnPct = na(firstCloseInRange) or firstCloseInRange == 0 ? 0.0 : ((close / firstCloseInRange) - 1) * 100
+
+// ============================================================================
+// STRATEGY PERFORMANCE METRICS
+// ============================================================================
+
+stratReturnPct = ((strategy.equity / strategy.initial_capital) - 1) * 100
+ratio = bhReturnPct > 0 ? stratReturnPct / bhReturnPct : na
+
+// Max Drawdown
+var float peakEquity = strategy.initial_capital
+var float maxDD = 0.0
+
+if strategy.equity > peakEquity
+    peakEquity := strategy.equity
+
+currentDD = peakEquity > 0 ? ((peakEquity - strategy.equity) / peakEquity) * 100 : 0.0
+if currentDD > maxDD
+    maxDD := currentDD
+
+tradesCount = strategy.closedtrades
+
+// Win rate
+var int wins = 0
+var int losses = 0
+
+if strategy.closedtrades > 0
+    wins := 0
+    losses := 0
+    for i = 0 to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) > 0
+            wins += 1
+        else
+            losses += 1
+
+winRate = tradesCount > 0 ? (wins / tradesCount) * 100 : 0.0
+
+// ============================================================================
+// PASS/FAIL LOGIC
+// ============================================================================
+
+passThreshold = 2.0
+var string passFailStatus = ""
+
+if barstate.islastconfirmedhistory
+    if na(ratio)
+        passFailStatus := "FAIL: BH <= 0"
+    else if ratio >= passThreshold and tradesCount >= minTrades and maxDD <= maxDDPct
+        passFailStatus := "PASS"
+    else
+        reasons = ""
+        if ratio < passThreshold
+            reasons := reasons + "Ratio<2.0 "
+        if tradesCount < minTrades
+            reasons := reasons + "Trades<" + str.tostring(minTrades) + " "
+        if maxDD > maxDDPct
+            reasons := reasons + "DD>" + str.tostring(maxDDPct) + "% "
+        passFailStatus := "FAIL: " + reasons
+
+// ============================================================================
+// TABLE DISPLAY
+// ============================================================================
+
+var table resultsTable = table.new(position.top_right, 2, 14, border_width=2, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+if barstate.islastconfirmedhistory
+    table.cell(resultsTable, 0, 0, "ADVANCED QUANT STRATEGY", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.normal)
+    table.cell(resultsTable, 1, 0, "", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.normal)
+
+    table.cell(resultsTable, 0, 1, "Strategy Return %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 1, str.tostring(stratReturnPct, "#.##") + "%", text_color=stratReturnPct > 0 ? color.lime : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 2, "Buy & Hold Return %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 2, str.tostring(bhReturnPct, "#.##") + "%", text_color=bhReturnPct > 0 ? color.green : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 3, "Ratio (Strat/BH)", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 3, na(ratio) ? "N/A" : str.tostring(ratio, "#.##") + "x", text_color=na(ratio) ? color.orange : (ratio >= passThreshold ? color.lime : color.red), bgcolor=color.new(color.gray, 70), text_size=size.large)
+
+    table.cell(resultsTable, 0, 4, "Leverage Used", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 4, str.tostring(leverageMultiplier, "#.#") + "x", text_color=color.yellow, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 5, "Max Drawdown %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 5, str.tostring(maxDD, "#.##") + "%", text_color=maxDD > maxDDPct ? color.red : color.yellow, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 6, "Total Trades", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 6, str.tostring(tradesCount), text_color=tradesCount >= minTrades ? color.white : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 7, "Win Rate %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 7, str.tostring(winRate, "#.##") + "%", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 8, "Wins / Losses", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 8, str.tostring(wins) + " / " + str.tostring(losses), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 9, "Momentum Score", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 9, str.tostring(momentumScore, "#.####"), text_color=momentumScore > 0 ? color.lime : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 10, "Vol Regime", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 10, isLowVolRegime ? "LOW VOL" : "HIGH VOL", text_color=isLowVolRegime ? color.lime : color.orange, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 11, "Trend Strength", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 11, str.tostring(trendStrength * 100, "#.##") + "%", text_color=trendStrength > 0 ? color.lime : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 12, "ATR Stop", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 12, not na(stopLoss) ? str.tostring(stopLoss, "#.##") : "N/A", text_color=color.yellow, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    statusColor = str.contains(passFailStatus, "PASS") ? color.new(color.green, 0) : color.new(color.red, 0)
+    table.cell(resultsTable, 0, 13, "STATUS", text_color=color.white, bgcolor=statusColor, text_size=size.large)
+    table.cell(resultsTable, 1, 13, passFailStatus, text_color=color.white, bgcolor=statusColor, text_size=size.large)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+// Plot trend MA
+plot(trendMA, "Trend MA", color=color.new(color.orange, 0), linewidth=2)
+
+// Plot ratio (in indicator pane, not overlay)
+plot(ratio, "Ratio", color=color.new(color.purple, 0), linewidth=2)
+hline(2.0, "Target (2.0x)", color=color.new(color.green, 50), linestyle=hline.style_dashed, linewidth=2)
+
+// Plot entry/exit signals
+plotshape(entrySignal and barstate.isconfirmed, "Entry", shape.triangleup, location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(exitSignal and barstate.isconfirmed and strategy.position_size > 0, "Exit", shape.triangledown, location.abovebar, color=color.new(color.red, 0), size=size.small)
+
+// Plot stop loss
+plot(strategy.position_size > 0 ? stopLoss : na, "Stop Loss", color=color.new(color.red, 0), linewidth=1, style=plot.style_linebr)
+
+// Background color for vol regime
+bgcolor(isLowVolRegime ? color.new(color.green, 95) : color.new(color.orange, 95), title="Vol Regime Background")

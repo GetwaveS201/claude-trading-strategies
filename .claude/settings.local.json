@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_2x_strategy.py:*)",
+      "Bash(python verify_tradingview_accuracy.py:*)",
+      "Bash(dir \"C:\\\\Users\\\\Legen\\\\Downloads\\\\claude trading\\\\data\")",
+      "Bash(python:*)",
+      "Bash(dir \"C:\\\\Users\\\\Legen\\\\Downloads\\\\claude trading\\\\results\\\\tradingview_accuracy_test\\\\charts\")",
+      "Bash(unzip:*)",
+      "Bash(xdg-open:*)",
+      "Bash(.md$ \")",
+      "Bash(git init:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

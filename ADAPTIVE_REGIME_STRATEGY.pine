@@ -1,0 +1,435 @@
+//@version=5
+strategy("Adaptive Regime Strategy", shorttitle="ARS", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2, process_orders_on_close=false, calc_on_every_tick=false, calc_on_order_fills=false)
+
+// ============================================================================
+// ADAPTIVE REGIME STRATEGY - Professional Grade
+// ============================================================================
+//
+// DESIGN PHILOSOPHY:
+// 1. Regime-aware: Adapts to trending, ranging, or breakout markets
+// 2. Multi-mode entries: Trend-following, mean-reversion, breakout
+// 3. Strict risk management: ATR stops, position sizing, time stops
+// 4. Non-repainting: All signals confirmed, no lookahead
+// 5. Backtestable: In-sample/out-of-sample validation
+//
+// EVIDENCE BASE:
+// - Trend-following: Century-scale momentum evidence
+// - Mean-reversion: Short-term reversal literature
+// - Breakout: Volatility expansion patterns
+// - Risk management: ATR-based stops, position sizing
+//
+// ============================================================================
+
+// ============================================================================
+// INPUTS - Organized by Function
+// ============================================================================
+
+// === SYMBOL CONFIGURATION ===
+signal_symbol = input.symbol("", "Signal Symbol (blank = chart)", group="Symbols", tooltip="Symbol to generate signals from. Leave blank to use chart symbol.")
+benchmark_symbol = input.symbol("SPY", "Benchmark Symbol", group="Symbols", tooltip="Benchmark for Buy & Hold comparison")
+
+// === BACKTEST WINDOWS ===
+use_windows = input.bool(false, "Use In-Sample/Out-Sample Windows", group="Backtest Windows")
+in_start = input.time(timestamp("2015-01-01"), "In-Sample Start", group="Backtest Windows")
+in_end = input.time(timestamp("2020-12-31"), "In-Sample End", group="Backtest Windows")
+out_start = input.time(timestamp("2021-01-01"), "Out-Sample Start", group="Backtest Windows")
+out_end = input.time(timestamp("2025-12-31"), "Out-Sample End", group="Backtest Windows")
+window_mode = input.string("In-Sample", "Active Window", options=["In-Sample", "Out-Sample", "Both"], group="Backtest Windows")
+
+// === TRADE DIRECTION ===
+allow_long = input.bool(true, "Enable Long Trades", group="Trade Direction")
+allow_short = input.bool(false, "Enable Short Trades", group="Trade Direction", tooltip="Shorts are more risky - use with caution")
+
+// === REGIME DETECTION ===
+adx_len = input.int(14, "ADX Period", minval=1, group="Regime Detection", tooltip="ADX measures trend strength")
+adx_trend = input.float(25, "ADX Trend Threshold", minval=10, group="Regime Detection")
+adx_range = input.float(20, "ADX Range Threshold", maxval=30, group="Regime Detection")
+bb_len = input.int(20, "Bollinger Period", minval=1, group="Regime Detection")
+bb_mult = input.float(2.0, "Bollinger Std Dev", minval=0.5, group="Regime Detection")
+
+// === TREND MODE SETTINGS ===
+trend_fast = input.int(20, "Trend Fast MA", minval=1, group="Trend Mode")
+trend_slow = input.int(50, "Trend Slow MA", minval=1, group="Trend Mode")
+trend_pullback = input.int(10, "Pullback Period", minval=1, group="Trend Mode")
+
+// === MEAN REVERSION SETTINGS ===
+rsi_period = input.int(14, "RSI Period", minval=1, group="Mean Reversion")
+rsi_oversold = input.float(30, "RSI Oversold", minval=0, maxval=50, group="Mean Reversion")
+rsi_overbought = input.float(70, "RSI Overbought", minval=50, maxval=100, group="Mean Reversion")
+
+// === BREAKOUT SETTINGS ===
+breakout_len = input.int(20, "Breakout Period", minval=1, group="Breakout Mode")
+vol_mult = input.float(1.5, "Vol Expansion Multiple", minval=1.0, group="Breakout Mode")
+
+// === RISK MANAGEMENT ===
+atr_period = input.int(14, "ATR Period", minval=1, group="Risk Management")
+stop_atr_mult = input.float(2.0, "Stop Loss ATR Multiple", minval=0.5, step=0.1, group="Risk Management")
+use_trailing = input.bool(true, "Use Trailing Stop", group="Risk Management")
+trail_atr_mult = input.float(3.0, "Trailing Stop ATR Multiple", minval=1.0, step=0.1, group="Risk Management")
+use_tp = input.bool(false, "Use Take Profit", group="Risk Management")
+tp_atr_mult = input.float(4.0, "Take Profit ATR Multiple", minval=1.0, step=0.5, group="Risk Management")
+use_time_stop = input.bool(true, "Use Time Stop", group="Risk Management")
+time_stop_bars = input.int(30, "Exit After N Bars", minval=1, group="Risk Management")
+
+// === POSITION SIZING ===
+sizing_mode = input.string("Percent of Equity", "Position Sizing", options=["Percent of Equity", "Risk-Based"], group="Position Sizing")
+risk_per_trade = input.float(1.0, "Risk % Per Trade", minval=0.1, maxval=5.0, step=0.1, group="Position Sizing", tooltip="Used in Risk-Based sizing")
+
+// === FILTERS ===
+use_vol_filter = input.bool(true, "Use Volatility Filter", group="Filters")
+min_atr = input.float(0.5, "Min ATR %", minval=0.1, group="Filters", tooltip="Avoid dead markets")
+max_atr = input.float(10.0, "Max ATR %", minval=1.0, group="Filters", tooltip="Avoid extreme volatility")
+use_htf_filter = input.bool(true, "Use Higher Timeframe Trend Filter", group="Filters")
+htf_timeframe = input.timeframe("D", "HTF Timeframe", group="Filters")
+htf_ma_len = input.int(50, "HTF MA Period", minval=1, group="Filters")
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Get signal symbol data (non-repainting)
+get_signal_data(src) =>
+    signal_sym = signal_symbol == "" ? syminfo.tickerid : signal_symbol
+    request.security(signal_sym, timeframe.period, src, lookahead=barmerge.lookahead_off)
+
+// Check if we're in an active backtest window
+in_window() =>
+    if not use_windows
+        true
+    else
+        in_in_sample = time >= in_start and time <= in_end
+        in_out_sample = time >= out_start and time <= out_end
+
+        if window_mode == "In-Sample"
+            in_in_sample
+        else if window_mode == "Out-Sample"
+            in_out_sample
+        else
+            in_in_sample or in_out_sample
+
+// ============================================================================
+// GET SIGNAL DATA (Non-Repainting)
+// ============================================================================
+
+sig_close = get_signal_data(close)
+sig_high = get_signal_data(high)
+sig_low = get_signal_data(low)
+sig_volume = get_signal_data(volume)
+
+// ============================================================================
+// REGIME DETECTION
+// ============================================================================
+
+// ADX calculation
+dirmov(len) =>
+    up = ta.change(sig_high)
+    down = -ta.change(sig_low)
+    plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+    minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+    trur = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / trur)
+    minus = fixnan(100 * ta.rma(minusDM, len) / trur)
+    [plus, minus]
+
+[plus, minus] = dirmov(adx_len)
+adx_sum = plus + minus
+adx = 100 * ta.rma(math.abs(plus - minus) / (adx_sum == 0 ? 1 : adx_sum), adx_len)
+
+// Bollinger Bands (for regime)
+bb_basis = ta.sma(sig_close, bb_len)
+bb_dev = bb_mult * ta.stdev(sig_close, bb_len)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+bb_width = (bb_upper - bb_lower) / bb_basis * 100
+
+// ATR (for volatility regime)
+atr = ta.atr(atr_period)
+atr_pct = atr / sig_close * 100
+
+// Regime Classification
+// TREND: High ADX, directional move
+// RANGE: Low ADX, price within BB
+// BREAKOUT: Expanding volatility, BB squeeze release
+
+is_trending = adx > adx_trend
+is_ranging = adx < adx_range
+is_breakout = bb_width > ta.sma(bb_width, 50) * vol_mult
+
+regime = is_trending ? "TREND" : is_breakout ? "BREAKOUT" : "RANGE"
+
+// ============================================================================
+// HIGHER TIMEFRAME FILTER (Non-Repainting)
+// ============================================================================
+
+htf_ma = request.security(signal_symbol == "" ? syminfo.tickerid : signal_symbol, htf_timeframe, ta.sma(close, htf_ma_len), lookahead=barmerge.lookahead_off)
+htf_bullish = sig_close > htf_ma
+htf_bearish = sig_close < htf_ma
+
+// ============================================================================
+// VOLATILITY FILTER
+// ============================================================================
+
+vol_ok = not use_vol_filter or (atr_pct >= min_atr and atr_pct <= max_atr)
+
+// ============================================================================
+// ENTRY MODE 1: TREND-FOLLOWING
+// ============================================================================
+
+// Fast and slow moving averages
+ma_fast = ta.ema(sig_close, trend_fast)
+ma_slow = ta.ema(sig_close, trend_slow)
+
+// Trend direction
+uptrend = ma_fast > ma_slow
+downtrend = ma_fast < ma_slow
+
+// Pullback logic (price pulled back to fast MA after being extended)
+pullback_long = uptrend and sig_close < ma_fast and sig_close > ma_slow and sig_close[1] >= ma_fast[1]
+pullback_short = downtrend and sig_close > ma_fast and sig_close < ma_slow and sig_close[1] <= ma_fast[1]
+
+// Trend entry signals
+trend_long = regime == "TREND" and pullback_long
+trend_short = regime == "TREND" and pullback_short
+
+// ============================================================================
+// ENTRY MODE 2: MEAN REVERSION
+// ============================================================================
+
+rsi = ta.rsi(sig_close, rsi_period)
+
+// Price at BB extremes + RSI confirmation
+mean_rev_long = regime == "RANGE" and sig_close <= bb_lower and rsi < rsi_oversold
+mean_rev_short = regime == "RANGE" and sig_close >= bb_upper and rsi > rsi_overbought
+
+// ============================================================================
+// ENTRY MODE 3: BREAKOUT
+// ============================================================================
+
+// Donchian channel breakout
+highest_high = ta.highest(sig_high, breakout_len)
+lowest_low = ta.lowest(sig_low, breakout_len)
+
+// Breakout with volatility expansion
+breakout_long = regime == "BREAKOUT" and sig_close > highest_high[1] and atr > ta.sma(atr, 20)
+breakout_short = regime == "BREAKOUT" and sig_close < lowest_low[1] and atr > ta.sma(atr, 20)
+
+// ============================================================================
+// COMBINED ENTRY SIGNALS
+// ============================================================================
+
+// Combine all modes
+raw_long = trend_long or mean_rev_long or breakout_long
+raw_short = trend_short or mean_rev_short or breakout_short
+
+// Apply filters
+long_signal = raw_long and allow_long and vol_ok and (not use_htf_filter or htf_bullish) and in_window()
+short_signal = raw_short and allow_short and vol_ok and (not use_htf_filter or htf_bearish) and in_window()
+
+// ============================================================================
+// POSITION SIZING
+// ============================================================================
+
+var float position_size = na
+
+if sizing_mode == "Risk-Based"
+    // Risk-based: Risk X% of equity per trade
+    risk_amount = strategy.equity * (risk_per_trade / 100)
+    stop_distance = atr * stop_atr_mult
+    position_size := stop_distance > 0 ? risk_amount / stop_distance : strategy.equity * 0.01
+else
+    // Percent of equity (default 100%)
+    position_size := strategy.equity
+
+// ============================================================================
+// ENTRY EXECUTION
+// ============================================================================
+
+// Track entry bar for time stop
+var int entry_bar = na
+var float entry_stop = na
+var float entry_tp = na
+
+if long_signal and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, qty=position_size/close)
+    entry_bar := bar_index
+    entry_stop := close - atr * stop_atr_mult
+    entry_tp := use_tp ? close + atr * tp_atr_mult : na
+
+if short_signal and strategy.position_size == 0
+    strategy.entry("Short", strategy.short, qty=position_size/close)
+    entry_bar := bar_index
+    entry_stop := close + atr * stop_atr_mult
+    entry_tp := use_tp ? close - atr * tp_atr_mult : na
+
+// ============================================================================
+// EXIT LOGIC
+// ============================================================================
+
+in_long = strategy.position_size > 0
+in_short = strategy.position_size < 0
+
+// Stop loss (ATR-based)
+if in_long
+    stop_price = use_trailing ? math.max(nz(entry_stop), close - atr * trail_atr_mult) : entry_stop
+    entry_stop := stop_price
+    strategy.exit("Stop Long", "Long", stop=stop_price, limit=entry_tp)
+
+if in_short
+    stop_price = use_trailing ? math.min(nz(entry_stop), close + atr * trail_atr_mult) : entry_stop
+    entry_stop := stop_price
+    strategy.exit("Stop Short", "Short", stop=stop_price, limit=entry_tp)
+
+// Time stop
+if use_time_stop and not na(entry_bar)
+    bars_in_trade = bar_index - entry_bar
+    if bars_in_trade >= time_stop_bars
+        if in_long
+            strategy.close("Long", comment="Time Stop")
+        if in_short
+            strategy.close("Short", comment="Time Stop")
+
+// ============================================================================
+// BENCHMARK CALCULATION (Buy & Hold)
+// ============================================================================
+
+var float bh_entry_price = na
+var int bh_shares = 0
+
+// Get benchmark data
+bh_close = request.security(benchmark_symbol, timeframe.period, close, lookahead=barmerge.lookahead_off)
+
+if na(bh_entry_price) and not na(bh_close)
+    bh_entry_price := bh_close
+    bh_shares := math.floor(strategy.initial_capital / bh_close)
+
+bh_equity = bh_shares * bh_close
+bh_return_pct = bh_entry_price > 0 ? (bh_close / bh_entry_price - 1) * 100 : 0
+
+// ============================================================================
+// PERFORMANCE METRICS
+// ============================================================================
+
+// Track peak equity for drawdown calculation
+var float peak_equity_metric = strategy.initial_capital
+peak_equity_metric := math.max(peak_equity_metric, strategy.equity)
+
+// Strategy metrics
+strategy_return_pct = (strategy.equity / strategy.initial_capital - 1) * 100
+strategy_dd_pct = peak_equity_metric > 0 ? (strategy.equity - peak_equity_metric) / peak_equity_metric * 100 : 0
+
+// Calculate additional metrics
+total_trades = strategy.closedtrades
+winning_trades = strategy.wintrades
+losing_trades = strategy.losstrades
+win_rate = total_trades > 0 ? winning_trades / total_trades * 100 : 0
+
+gross_profit = strategy.grossprofit
+gross_loss = strategy.grossloss
+profit_factor = gross_loss != 0 ? math.abs(gross_profit / gross_loss) : 0
+
+avg_win = winning_trades > 0 ? gross_profit / winning_trades : 0
+avg_loss = losing_trades > 0 ? gross_loss / losing_trades : 0
+avg_trade = total_trades > 0 ? strategy.netprofit / total_trades : 0
+
+// Comparison
+beats_benchmark = strategy_return_pct > bh_return_pct
+ratio = bh_return_pct > 0 ? strategy_return_pct / bh_return_pct : 0
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Plot moving averages (trend reference)
+plot(ma_fast, "Fast MA", color=color.blue, linewidth=1)
+plot(ma_slow, "Slow MA", color=color.orange, linewidth=2)
+
+// Plot entry stop levels
+plot(strategy.position_size != 0 ? entry_stop : na, "Stop Level", color=color.red, style=plot.style_circles, linewidth=2)
+plot(strategy.position_size != 0 and use_tp ? entry_tp : na, "TP Level", color=color.green, style=plot.style_circles, linewidth=2)
+
+// Background color for regime
+bgcolor(regime == "TREND" ? color.new(color.blue, 95) : regime == "BREAKOUT" ? color.new(color.orange, 95) : color.new(color.gray, 97), title="Regime")
+
+// ============================================================================
+// PERFORMANCE TABLE
+// ============================================================================
+
+var table perf_table = table.new(position.top_right, 2, 12, border_width=1)
+
+if barstate.islast
+    // Header
+    table.cell(perf_table, 0, 0, "PERFORMANCE", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+    table.cell(perf_table, 1, 0, "VALUE", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+
+    // Strategy metrics
+    table.cell(perf_table, 0, 1, "Strategy Return", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 1, str.tostring(strategy_return_pct, "#.##") + "%", text_color=strategy_return_pct > 0 ? color.lime : color.red, text_size=size.small)
+
+    table.cell(perf_table, 0, 2, "Max Drawdown", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 2, str.tostring(strategy_dd_pct, "#.##") + "%", text_color=color.red, text_size=size.small)
+
+    table.cell(perf_table, 0, 3, "Profit Factor", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 3, str.tostring(profit_factor, "#.##"), text_color=profit_factor > 1.5 ? color.lime : color.white, text_size=size.small)
+
+    table.cell(perf_table, 0, 4, "Win Rate", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 4, str.tostring(win_rate, "#.#") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(perf_table, 0, 5, "Total Trades", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 5, str.tostring(total_trades), text_color=color.white, text_size=size.small)
+
+    table.cell(perf_table, 0, 6, "Avg Trade", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 6, "$" + str.tostring(avg_trade, "#"), text_color=avg_trade > 0 ? color.lime : color.red, text_size=size.small)
+
+    // Separator
+    table.cell(perf_table, 0, 7, "BENCHMARK", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+    table.cell(perf_table, 1, 7, benchmark_symbol, text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+
+    table.cell(perf_table, 0, 8, "B&H Return", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 8, str.tostring(bh_return_pct, "#.##") + "%", text_color=color.white, text_size=size.small)
+
+    table.cell(perf_table, 0, 9, "Ratio", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 9, str.tostring(ratio, "#.##") + "x", text_color=ratio > 1.0 ? color.lime : color.red, text_size=size.small)
+
+    // Separator
+    table.cell(perf_table, 0, 10, "BEATS B&H?", text_color=color.white, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+    table.cell(perf_table, 1, 10, beats_benchmark ? "YES ✅" : "NO ❌", text_color=beats_benchmark ? color.lime : color.red, bgcolor=color.new(color.gray, 20), text_size=size.normal)
+
+    // Regime display
+    table.cell(perf_table, 0, 11, "Current Regime", text_color=color.white, text_size=size.small)
+    table.cell(perf_table, 1, 11, regime, text_color=regime == "TREND" ? color.blue : regime == "BREAKOUT" ? color.orange : color.gray, text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(long_signal, "Long Entry", "Adaptive Strategy: LONG signal")
+alertcondition(short_signal, "Short Entry", "Adaptive Strategy: SHORT signal")
+
+// ============================================================================
+// NOTES & DOCUMENTATION
+// ============================================================================
+
+// REGIME LOGIC:
+// - TREND: ADX > 25, use trend-following (MA pullbacks)
+// - RANGE: ADX < 20, use mean reversion (BB + RSI)
+// - BREAKOUT: Volatility expansion, use Donchian breakouts
+//
+// RISK MANAGEMENT:
+// - ATR-based stops (default 2x ATR)
+// - Optional trailing stop (3x ATR)
+// - Optional take profit (4x ATR)
+// - Time stop (exit after 30 bars if going nowhere)
+//
+// FILTERS:
+// - Volatility filter: Min 0.5%, Max 10% ATR
+// - Higher timeframe trend: Must align with daily 50 SMA
+// - Window filter: In-sample vs out-sample testing
+//
+// NON-REPAINTING:
+// - All request.security uses lookahead_off
+// - No future data in calculations
+// - Confirmed signals only
+//
+// POSITION SIZING:
+// - Percent of Equity: Default 100% (adjust in strategy settings)
+// - Risk-Based: Risk 1% per trade based on stop distance

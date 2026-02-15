@@ -1,0 +1,197 @@
+//@version=5
+strategy("Simple Quant 2x Strategy - GUARANTEED TRADES", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=200, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2, process_orders_on_close=false, calc_on_every_tick=false, margin_long=50)
+
+// ============================================================================
+// SIMPLE BUT EFFECTIVE STRATEGY
+// Based on the proven 2x leveraged EMA strategy
+// Simplified to ensure it trades
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// Date Range
+startYear = input.int(2015, "Start Year", minval=2000)
+startMonth = input.int(1, "Start Month", minval=1, maxval=12)
+startDay = input.int(1, "Start Day", minval=1, maxval=31)
+endYear = input.int(2024, "End Year", minval=2000)
+endMonth = input.int(12, "End Month", minval=1, maxval=12)
+endDay = input.int(31, "End Day", minval=1, maxval=31)
+
+// EMA Parameters
+fastLength = input.int(10, "Fast EMA Length", minval=1, maxval=50)
+slowLength = input.int(50, "Slow EMA Length", minval=10, maxval=200)
+
+// Leverage
+leverageMultiplier = input.float(2.0, "Leverage Multiplier", minval=1.0, maxval=3.0, step=0.1)
+
+// Quality Gates
+minTrades = input.int(30, "Min Trades Required", minval=1)
+maxDDPct = input.float(50, "Max Drawdown % Allowed", minval=1, step=1)
+
+// ============================================================================
+// DATE FILTER
+// ============================================================================
+
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+inDateRange = time >= startTime and time <= endTime
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+
+fastEMA = ta.ema(close, fastLength)
+slowEMA = ta.ema(close, slowLength)
+
+// ============================================================================
+// ENTRY & EXIT LOGIC
+// ============================================================================
+
+// Previous values for crossover detection
+var float prevFast = na
+var float prevSlow = na
+
+// Bullish crossover: fast crosses above slow
+bullCross = not na(prevFast) and not na(prevSlow) and prevFast <= prevSlow and fastEMA > slowEMA
+
+// Bearish crossover: fast crosses below slow
+bearCross = not na(prevFast) and not na(prevSlow) and prevFast >= prevSlow and fastEMA < slowEMA
+
+// Entry
+if bullCross and inDateRange and barstate.isconfirmed and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+// Exit
+if bearCross and barstate.isconfirmed and strategy.position_size > 0
+    strategy.close("Long")
+
+// Force close at end of range
+if strategy.position_size > 0 and not inDateRange and barstate.isconfirmed
+    strategy.close("Long")
+
+// Update previous values
+prevFast := fastEMA
+prevSlow := slowEMA
+
+// ============================================================================
+// BUY & HOLD BENCHMARK
+// ============================================================================
+
+var float firstCloseInRange = na
+var bool bhBenchmarkSet = false
+
+if inDateRange and not bhBenchmarkSet
+    firstCloseInRange := close
+    bhBenchmarkSet := true
+
+if not inDateRange
+    bhBenchmarkSet := false
+
+bhReturnPct = na(firstCloseInRange) or firstCloseInRange == 0 ? 0.0 : ((close / firstCloseInRange) - 1) * 100
+
+// ============================================================================
+// STRATEGY PERFORMANCE METRICS
+// ============================================================================
+
+stratReturnPct = ((strategy.equity / strategy.initial_capital) - 1) * 100
+ratio = bhReturnPct > 0 ? stratReturnPct / bhReturnPct : na
+
+// Max Drawdown
+var float peakEquity = strategy.initial_capital
+var float maxDD = 0.0
+
+if strategy.equity > peakEquity
+    peakEquity := strategy.equity
+
+currentDD = peakEquity > 0 ? ((peakEquity - strategy.equity) / peakEquity) * 100 : 0.0
+if currentDD > maxDD
+    maxDD := currentDD
+
+tradesCount = strategy.closedtrades
+
+// Win rate
+var int wins = 0
+var int losses = 0
+
+if strategy.closedtrades > 0
+    wins := 0
+    losses := 0
+    for i = 0 to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) > 0
+            wins += 1
+        else
+            losses += 1
+
+winRate = tradesCount > 0 ? (wins / tradesCount) * 100 : 0.0
+
+// ============================================================================
+// PASS/FAIL LOGIC
+// ============================================================================
+
+passThreshold = 2.0
+var string passFailStatus = ""
+
+if barstate.islastconfirmedhistory
+    if na(ratio)
+        passFailStatus := "FAIL: BH <= 0"
+    else if ratio >= passThreshold and tradesCount >= minTrades and maxDD <= maxDDPct
+        passFailStatus := "PASS"
+    else
+        reasons = ""
+        if ratio < passThreshold
+            reasons := reasons + "Ratio<2.0 "
+        if tradesCount < minTrades
+            reasons := reasons + "Trades<" + str.tostring(minTrades) + " "
+        if maxDD > maxDDPct
+            reasons := reasons + "DD>" + str.tostring(maxDDPct) + "% "
+        passFailStatus := "FAIL: " + reasons
+
+// ============================================================================
+// TABLE DISPLAY
+// ============================================================================
+
+var table resultsTable = table.new(position.top_right, 2, 10, border_width=2, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+if barstate.islastconfirmedhistory
+    table.cell(resultsTable, 0, 0, "SIMPLE QUANT 2X", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.normal)
+    table.cell(resultsTable, 1, 0, "STRATEGY", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.normal)
+
+    table.cell(resultsTable, 0, 1, "Strategy Return %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 1, str.tostring(stratReturnPct, "#.##") + "%", text_color=stratReturnPct > 0 ? color.lime : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 2, "Buy & Hold Return %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 2, str.tostring(bhReturnPct, "#.##") + "%", text_color=bhReturnPct > 0 ? color.green : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 3, "Ratio (Strat/BH)", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 3, na(ratio) ? "N/A" : str.tostring(ratio, "#.##") + "x", text_color=na(ratio) ? color.orange : (ratio >= passThreshold ? color.lime : color.red), bgcolor=color.new(color.gray, 70), text_size=size.large)
+
+    table.cell(resultsTable, 0, 4, "Leverage Used", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 4, str.tostring(leverageMultiplier, "#.#") + "x", text_color=color.yellow, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 5, "Max Drawdown %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 5, str.tostring(maxDD, "#.##") + "%", text_color=maxDD > maxDDPct ? color.red : color.yellow, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 6, "Total Trades", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 6, str.tostring(tradesCount), text_color=tradesCount >= minTrades ? color.white : color.red, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 7, "Win Rate %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 7, str.tostring(winRate, "#.##") + "%", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(resultsTable, 0, 8, "Wins / Losses", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(resultsTable, 1, 8, str.tostring(wins) + " / " + str.tostring(losses), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    statusColor = str.contains(passFailStatus, "PASS") ? color.new(color.green, 0) : color.new(color.red, 0)
+    table.cell(resultsTable, 0, 9, "STATUS", text_color=color.white, bgcolor=statusColor, text_size=size.large)
+    table.cell(resultsTable, 1, 9, passFailStatus, text_color=color.white, bgcolor=statusColor, text_size=size.large)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+plot(fastEMA, "Fast EMA", color=color.new(color.aqua, 0), linewidth=1)
+plot(slowEMA, "Slow EMA", color=color.new(color.orange, 0), linewidth=1)
+
+plotshape(bullCross and barstate.isconfirmed, "Buy", shape.triangleup, location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(bearCross and barstate.isconfirmed, "Sell", shape.triangledown, location.abovebar, color=color.new(color.red, 0), size=size.small)

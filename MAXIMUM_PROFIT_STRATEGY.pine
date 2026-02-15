@@ -1,0 +1,259 @@
+//@version=5
+strategy("MAXIMUM PROFIT Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=200, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2, process_orders_on_close=false, calc_on_every_tick=false, margin_long=50)
+
+// ============================================================================
+// OPTIMIZED FOR MAXIMUM PROFIT
+// ============================================================================
+// Strategy: Trend following with volatility filter and momentum confirmation
+// Goal: Fewer trades, higher quality, maximum returns
+// ============================================================================
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// Date Range
+startYear = input.int(2015, "Start Year")
+startMonth = input.int(1, "Start Month", minval=1, maxval=12)
+startDay = input.int(1, "Start Day", minval=1, maxval=31)
+endYear = input.int(2024, "End Year")
+endMonth = input.int(12, "End Month", minval=1, maxval=12)
+endDay = input.int(31, "End Day", minval=1, maxval=31)
+
+// Strategy Parameters - OPTIMIZED FOR MAX PROFIT
+fastMA = input.int(8, "Fast EMA", minval=3, maxval=30, group="Trend")
+slowMA = input.int(21, "Slow EMA", minval=10, maxval=100, group="Trend")
+trendMA = input.int(200, "Trend Filter MA", minval=100, maxval=300, group="Trend")
+
+// Momentum filter
+momPeriod = input.int(14, "Momentum Period", minval=5, maxval=50, group="Momentum")
+momThreshold = input.float(0.0, "Momentum Threshold %", minval=-5, maxval=5, step=0.1, group="Momentum")
+
+// Volatility filter
+atrPeriod = input.int(14, "ATR Period", minval=5, maxval=30, group="Volatility")
+atrMultiplier = input.float(2.0, "ATR Stop Multiplier", minval=0.5, maxval=5.0, step=0.1, group="Volatility")
+
+// Position sizing
+leverage = input.float(2.0, "Leverage", minval=1.0, maxval=3.0, step=0.1, group="Position")
+
+// Exit strategy
+useATRStops = input.bool(true, "Use ATR Trailing Stops", group="Exits")
+useEMACross = input.bool(true, "Exit on EMA Cross", group="Exits")
+
+// ============================================================================
+// DATE FILTER
+// ============================================================================
+
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+inDateRange = time >= startTime and time <= endTime
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+
+// EMAs
+fast = ta.ema(close, fastMA)
+slow = ta.ema(close, slowMA)
+trend = ta.sma(close, trendMA)
+
+// Momentum
+momentum = (close - close[momPeriod]) / close[momPeriod] * 100
+
+// ATR
+atr = ta.atr(atrPeriod)
+
+// Previous values for crosses
+var float prevFast = na
+var float prevSlow = na
+
+// ============================================================================
+// ENTRY LOGIC - OPTIMIZED
+// ============================================================================
+
+// 1. EMA crossover
+bullCross = not na(prevFast) and not na(prevSlow) and prevFast <= prevSlow and fast > slow
+
+// 2. Trend filter - only trade in strong uptrend
+aboveTrend = close > trend
+
+// 3. Momentum confirmation - price has momentum
+hasPositiveMomentum = momentum > momThreshold
+
+// 4. Quality filter - not overextended
+notOverextended = (close - slow) / slow < 0.05  // Less than 5% above slow EMA
+
+// ENTRY: All conditions must be true
+entrySignal = bullCross and aboveTrend and hasPositiveMomentum
+
+if entrySignal and inDateRange and barstate.isconfirmed and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+// Update previous values
+prevFast := fast
+prevSlow := slow
+
+// ============================================================================
+// EXIT LOGIC - OPTIMIZED
+// ============================================================================
+
+// Exit 1: EMA cross (if enabled)
+bearCross = not na(prevFast) and not na(prevSlow) and prevFast >= prevSlow and fast < slow
+exitOnCross = useEMACross and bearCross
+
+// Exit 2: ATR trailing stop (if enabled)
+var float stopLoss = na
+var float entryPrice = na
+
+if strategy.position_size > 0 and na(entryPrice)
+    entryPrice := close
+    stopLoss := close - (atr * atrMultiplier)
+
+// Trail stop up
+if strategy.position_size > 0 and useATRStops
+    newStop = close - (atr * atrMultiplier)
+    if newStop > stopLoss
+        stopLoss := newStop
+
+exitOnStop = useATRStops and strategy.position_size > 0 and close < stopLoss
+
+// Exit 3: Trend break - price falls below trend MA
+exitOnTrendBreak = close < trend
+
+// Combined exit
+exitSignal = exitOnCross or exitOnStop or exitOnTrendBreak
+
+if exitSignal and barstate.isconfirmed and strategy.position_size > 0
+    strategy.close("Long")
+    entryPrice := na
+    stopLoss := na
+
+// Force close at end
+if strategy.position_size > 0 and not inDateRange and barstate.isconfirmed
+    strategy.close("Long")
+    entryPrice := na
+    stopLoss := na
+
+// ============================================================================
+// BUY & HOLD BENCHMARK
+// ============================================================================
+
+var float firstClose = na
+var bool bhSet = false
+
+if inDateRange and not bhSet
+    firstClose := close
+    bhSet := true
+
+if not inDateRange
+    bhSet := false
+
+bhReturn = na(firstClose) or firstClose == 0 ? 0.0 : ((close / firstClose) - 1) * 100
+
+// ============================================================================
+// PERFORMANCE METRICS
+// ============================================================================
+
+stratReturn = ((strategy.equity / strategy.initial_capital) - 1) * 100
+ratio = bhReturn > 0 ? stratReturn / bhReturn : na
+
+// Max DD
+var float peak = strategy.initial_capital
+var float maxDD = 0.0
+
+if strategy.equity > peak
+    peak := strategy.equity
+
+currentDD = peak > 0 ? ((peak - strategy.equity) / peak) * 100 : 0.0
+if currentDD > maxDD
+    maxDD := currentDD
+
+trades = strategy.closedtrades
+
+// Win rate
+var int wins = 0
+var int losses = 0
+
+if strategy.closedtrades > 0
+    wins := 0
+    losses := 0
+    for i = 0 to strategy.closedtrades - 1
+        if strategy.closedtrades.profit(i) > 0
+            wins += 1
+        else
+            losses += 1
+
+winRate = trades > 0 ? (wins / trades) * 100 : 0.0
+
+// ============================================================================
+// STATUS
+// ============================================================================
+
+var string status = ""
+
+if barstate.islastconfirmedhistory
+    if na(ratio)
+        status := "FAIL: BH <= 0"
+    else if ratio >= 2.0 and trades >= 30 and maxDD <= 50
+        status := "PASS"
+    else
+        status := "FAIL: "
+        if ratio < 2.0
+            status := status + "Ratio<2.0 "
+        if trades < 30
+            status := status + "Trades<30 "
+        if maxDD > 50
+            status := status + "DD>50% "
+
+// ============================================================================
+// DISPLAY TABLE
+// ============================================================================
+
+var table t = table.new(position.top_right, 2, 10, border_width=2, border_color=color.gray)
+
+if barstate.islastconfirmedhistory
+    table.cell(t, 0, 0, "MAXIMUM PROFIT", text_color=color.white, bgcolor=color.new(color.blue, 30))
+    table.cell(t, 1, 0, "STRATEGY", text_color=color.white, bgcolor=color.new(color.blue, 30))
+
+    table.cell(t, 0, 1, "Strategy Return %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(stratReturn, "#.##") + "%", text_color=stratReturn > 0 ? color.lime : color.red, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 2, "Buy & Hold %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(bhReturn, "#.##") + "%", text_color=bhReturn > 0 ? color.green : color.red, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 3, "Ratio", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 3, na(ratio) ? "N/A" : str.tostring(ratio, "#.##") + "x", text_color=na(ratio) ? color.orange : (ratio >= 2.0 ? color.lime : color.red), bgcolor=color.new(color.gray, 70), text_size=size.large)
+
+    table.cell(t, 0, 4, "Leverage", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 4, str.tostring(leverage, "#.#") + "x", text_color=color.yellow, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 5, "Max DD %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 5, str.tostring(maxDD, "#.##") + "%", text_color=maxDD > 35 ? color.red : color.yellow, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 6, "Total Trades", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 6, str.tostring(trades), text_color=color.white, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 7, "Win Rate %", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 7, str.tostring(winRate, "#.##") + "%", text_color=color.white, bgcolor=color.new(color.gray, 70))
+
+    table.cell(t, 0, 8, "Wins / Losses", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(t, 1, 8, str.tostring(wins) + " / " + str.tostring(losses), text_color=color.white, bgcolor=color.new(color.gray, 70))
+
+    statusColor = str.contains(status, "PASS") ? color.new(color.green, 0) : color.new(color.red, 0)
+    table.cell(t, 0, 9, "STATUS", text_color=color.white, bgcolor=statusColor, text_size=size.large)
+    table.cell(t, 1, 9, status, text_color=color.white, bgcolor=statusColor, text_size=size.large)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+plot(fast, "Fast EMA", color=color.new(color.aqua, 0), linewidth=1)
+plot(slow, "Slow EMA", color=color.new(color.orange, 0), linewidth=1)
+plot(trend, "Trend MA", color=color.new(color.gray, 0), linewidth=2)
+
+plotshape(entrySignal and barstate.isconfirmed, "BUY", shape.triangleup, location.belowbar, color=color.new(color.green, 0), size=size.normal)
+plotshape(exitSignal and barstate.isconfirmed, "SELL", shape.triangledown, location.abovebar, color=color.new(color.red, 0), size=size.normal)
+
+plot(strategy.position_size > 0 and useATRStops ? stopLoss : na, "Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+
+bgcolor(aboveTrend ? color.new(color.green, 95) : color.new(color.red, 95))

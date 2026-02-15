@@ -1,0 +1,4 @@
+{
+  "strategy": "leveraged_ema",
+  "symbol": "SPY"
+}

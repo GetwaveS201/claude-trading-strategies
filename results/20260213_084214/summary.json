@@ -1,0 +1,22 @@
+{
+  "initial_equity": 100000,
+  "final_equity": 97423.765015,
+  "total_return_pct": -2.5762349850000033,
+  "start_date": "2015-01-02",
+  "end_date": "2015-12-31",
+  "duration_days": 363,
+  "cagr": -2.5919946276449557,
+  "max_drawdown_pct": -5.434049353746165,
+  "sharpe_ratio": -0.4232240164551547,
+  "sortino_ratio": -0.27953969945023366,
+  "num_trades": 2,
+  "num_wins": 1,
+  "num_losses": 1,
+  "win_rate_pct": 50.0,
+  "avg_win": 859.3857799999727,
+  "avg_win_pct": 0.937658059684221,
+  "avg_loss": -3415.205029999987,
+  "avg_loss_pct": -3.5926531749044144,
+  "profit_factor": 0.25163519391981454,
+  "exposure_pct": 24.6031746031746
+}

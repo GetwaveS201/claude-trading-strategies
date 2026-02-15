@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backtester"
+version = "1.0.0"
+description = "Professional stock backtesting engine with no look-ahead bias"
+requires-python = ">=3.8"
+dependencies = [
+    "pandas>=1.3.0",
+    "numpy>=1.21.0",
+    "matplotlib>=3.4.0",
+    "pytest>=7.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+backtester = "backtester.cli:main"

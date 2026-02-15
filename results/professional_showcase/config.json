@@ -1,0 +1,9 @@
+{
+  "strategy": "Leveraged EMA Cross (2x)",
+  "symbol": "SPY",
+  "timeframe": "Daily",
+  "period": "2015-2024",
+  "leverage": "2.0x",
+  "fast_ema": 10,
+  "slow_ema": 50
+}

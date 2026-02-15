@@ -1,0 +1,99 @@
+//@version=5
+strategy("Evidence-Based Trend (Simple)", shorttitle="Trend", overlay=true, initial_capital=100000, default_qty_type=strategy.cash, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
+
+// ============================================================================
+// EXACT IMPLEMENTATION FROM ACADEMIC EVIDENCE
+// ============================================================================
+//
+// Source: "Strategy one: Diversified trend-following on liquid ETFs"
+// Evidence: Moskowitz et al. (2012), Hurst et al. (2017)
+// Century-scale proof: 1880-present
+//
+// SIMPLE RULE:
+// - If 12-month return > 0: GO LONG
+// - If 12-month return <= 0: GO FLAT
+// - Rebalance MONTHLY
+// - Use volatility targeting for position size
+//
+// ============================================================================
+
+// Inputs (Literature Standards)
+lookback = input.int(252, "Lookback Days (12 months)", group="Signal")
+vol_window = input.int(60, "Volatility Window", group="Sizing")
+target_vol = input.float(10.0, "Target Vol %", group="Sizing")
+
+// ============================================================================
+// SIGNAL: Time-Series Momentum
+// ============================================================================
+
+// 12-month total return
+mom = close / close[lookback] - 1
+
+// Signal: +1 if positive, 0 if negative
+signal = mom > 0 ? 1.0 : 0.0
+
+// ============================================================================
+// POSITION SIZING: Volatility Targeting
+// ============================================================================
+
+// Daily returns
+ret = (close - close[1]) / close[1]
+
+// Realized volatility (annualized %)
+vol = ta.stdev(ret, vol_window) * math.sqrt(252) * 100
+
+// Leverage = target_vol / realized_vol
+leverage = vol > 0 ? target_vol / vol : 1.0
+leverage := math.min(leverage, 2.0)  // Cap at 2x
+
+// Position size in dollars
+position_size = leverage * signal * strategy.initial_capital
+
+// ============================================================================
+// MONTHLY REBALANCING
+// ============================================================================
+
+var int last_month = 0
+new_month = month(time) != last_month
+last_month := month(time)
+
+if new_month
+    strategy.cancel_all()
+    strategy.close_all()
+
+    if signal > 0 and position_size > 0
+        strategy.entry("Long", strategy.long, qty=position_size/close)
+
+// ============================================================================
+// BENCHMARK
+// ============================================================================
+
+var float bh_shares = na
+if na(bh_shares)
+    bh_shares := strategy.initial_capital / close
+
+bh_value = bh_shares * close
+bh_return = (bh_value / strategy.initial_capital - 1) * 100
+strat_return = (strategy.equity / strategy.initial_capital - 1) * 100
+ratio = bh_return > 0 ? strat_return / bh_return : 0
+
+// ============================================================================
+// DISPLAY
+// ============================================================================
+
+plot(ta.sma(close, 252), "12M SMA", color.orange)
+bgcolor(signal > 0 ? color.new(color.green, 95) : na)
+
+var table t = table.new(position.top_right, 2, 4)
+if barstate.islast
+    table.cell(t, 0, 0, "Strategy", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(strat_return, "#.#") + "%", text_color=strat_return > 0 ? color.lime : color.red)
+
+    table.cell(t, 0, 1, "Buy & Hold", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 1, str.tostring(bh_return, "#.#") + "%", text_color=color.white)
+
+    table.cell(t, 0, 2, "Ratio", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(ratio, "#.##") + "x", text_color=ratio >= 2.0 ? color.lime : color.red)
+
+    table.cell(t, 0, 3, "Status", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 3, ratio >= 2.0 ? "PASS ✅" : "FAIL ❌", text_color=ratio >= 2.0 ? color.lime : color.red)
