@@ -6,7 +6,6 @@ __pycache__/
 venv/
 dist/
 build/
-*.py
 src/
 tests/
 

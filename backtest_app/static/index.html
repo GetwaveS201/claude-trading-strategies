@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategy Backtester</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📈 Strategy Backtester</h1>
+            <p>Upload your Backtrader strategy and CSV data to run backtests</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Upload Form -->
+            <section class="upload-section">
+                <h2>Upload Files</h2>
+                <form id="backtestForm">
+                    <div class="form-group">
+                        <label for="strategyFile">Strategy File (.py)</label>
+                        <input type="file" id="strategyFile" name="strategy_file" accept=".py" required>
+                        <button type="button" class="btn-secondary" onclick="downloadSampleStrategy()">Download Sample Strategy</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="dataFile">Data File (.csv)</label>
+                        <input type="file" id="dataFile" name="data_csv" accept=".csv" required>
+                        <button type="button" class="btn-secondary" onclick="downloadSampleData()">Download Sample Data</button>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="initialCash">Initial Cash ($)</label>
+                            <input type="number" id="initialCash" name="initial_cash" value="10000" min="100" step="100" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="commission">Commission (%)</label>
+                            <input type="number" id="commission" name="commission" value="0.1" min="0" max="10" step="0.01" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="runBtn">Run Backtest</button>
+                </form>
+
+                <div id="loadingSpinner" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Running backtest...</p>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <h2>Results</h2>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <h3>Total Return</h3>
+                        <p class="metric-value" id="totalReturn">-</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Net P&L</h3>
+                        <p class="metric-value" id="netPnl">-</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Win Rate</h3>
+                        <p class="metric-value" id="winRate">-</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Max Drawdown</h3>
+                        <p class="metric-value" id="maxDrawdown">-</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Total Trades</h3>
+                        <p class="metric-value" id="totalTrades">-</p>
+                    </div>
+                    <div class="metric-card">
+                        <h3>Sharpe Ratio</h3>
+                        <p class="metric-value" id="sharpeRatio">-</p>
+                    </div>
+                </div>
+
+                <div class="equity-chart">
+                    <h3>Equity Curve</h3>
+                    <canvas id="equityChart"></canvas>
+                </div>
+
+                <div class="trades-summary">
+                    <h3>Trades Summary</h3>
+                    <div id="tradesDetails"></div>
+                </div>
+            </section>
+
+            <!-- Error Section -->
+            <section class="error-section" id="errorSection" style="display: none;">
+                <h2>❌ Error</h2>
+                <div class="error-message" id="errorMessage"></div>
+                <pre class="error-traceback" id="errorTraceback"></pre>
+            </section>
+        </div>
+
+        <footer>
+            <p>Powered by Backtrader | Made with FastAPI</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
